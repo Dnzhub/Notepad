@@ -8,8 +8,10 @@ import androidx.annotation.NonNull;
 import androidx.appcompat.app.AppCompatActivity;
 import androidx.core.app.ActivityCompat;
 import androidx.core.content.ContextCompat;
+import androidx.core.content.res.TypedArrayUtils;
 
 import android.Manifest;
+import android.app.TimePickerDialog;
 import android.content.Intent;
 import android.content.pm.PackageManager;
 import android.database.Cursor;
@@ -21,17 +23,20 @@ import android.graphics.ImageDecoder;
 import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
+import android.provider.AlarmClock;
 import android.provider.MediaStore;
 import android.view.Menu;
 import android.view.MenuInflater;
 import android.view.MenuItem;
 import android.view.View;
+import android.widget.TimePicker;
 import android.widget.Toast;
 
 import com.google.android.material.snackbar.Snackbar;
 import com.javalearning.mynotes.databinding.ActivityDetailsBinding;
 
 import java.io.ByteArrayOutputStream;
+import java.util.Calendar;
 
 public class DetailsActivity extends AppCompatActivity {
 
@@ -41,12 +46,23 @@ public class DetailsActivity extends AppCompatActivity {
     ActivityResultLauncher<String> permissionLauncher;
     Bitmap selectedImage;
     SQLiteDatabase database;
+    TimePickerDialog timePickerDialog;
+    Calendar calendar;
+
+    int choosenHour;
+    int choosenMinute;
+    int currentHour;
+    int currentMinute;
+    String amPm;
+
+    byte[] byteArray;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         binding = ActivityDetailsBinding.inflate(getLayoutInflater());
         View view = binding.getRoot();
+        binding.dateText.setEnabled(false);
         setContentView(view);
         registerLauncher();
 
@@ -61,17 +77,20 @@ public class DetailsActivity extends AppCompatActivity {
             binding.nameText.setText("");
             binding.dateText.setText("");
             binding.descriptionText.setText("");
-            binding.imageView.setImageResource(R.drawable.selectimage);
+            binding.imageView.setImageResource(R.drawable.select);
             binding.button.setVisibility(View.VISIBLE);
-
+            binding.button2.setVisibility(View.INVISIBLE);
+            binding.button3.setVisibility(View.INVISIBLE);
+            binding.imageView.setClickable(true);
 
 
         }else{
             //id göre mevcut veriyi cekip ekranda göster
             int noteId = intent.getIntExtra("noteId",0);
             binding.button.setVisibility(View.INVISIBLE);
-
-
+            binding.button2.setVisibility(View.VISIBLE);
+            binding.button3.setVisibility(View.VISIBLE);
+            binding.imageView.setClickable(false);
 
             try {
                                                         //? yerine noteId yerleştir
@@ -98,47 +117,113 @@ public class DetailsActivity extends AppCompatActivity {
 
         }
     }
+    public void chooseTime(View view){
+        calendar = Calendar.getInstance();
+        currentHour = calendar.get(Calendar.HOUR_OF_DAY);
+        currentMinute = calendar.get(Calendar.MINUTE);
 
+        timePickerDialog = new TimePickerDialog(DetailsActivity.this, new TimePickerDialog.OnTimeSetListener() {
+            @Override
+            public void onTimeSet(TimePicker timePicker, int hourOfDay, int minutes) {
+                if(hourOfDay >= 12){
+                    amPm = "PM";
+                }else{
+                    amPm = "AM";
+                }
+                binding.dateText.setText(String.format("%02d:%02d",hourOfDay,minutes) + amPm);
+                choosenHour = hourOfDay;
+                choosenMinute = minutes;
+            }
+        },currentHour,currentMinute,false);
+        timePickerDialog.show();
+    }
+    public void setAlarm(View view){
+        if(binding.dateText.getText().toString().isEmpty()){
+            Toast.makeText(DetailsActivity.this,"Please choose a time",Toast.LENGTH_LONG).show();
+        }
+        else{
+            Intent intent = new Intent(AlarmClock.ACTION_SET_ALARM);
+            intent.putExtra(AlarmClock.EXTRA_HOUR,choosenHour);
+            intent.putExtra(AlarmClock.EXTRA_MINUTES,choosenMinute);
+            intent.putExtra(AlarmClock.EXTRA_MESSAGE,"This is Notepad alarm.");
+            //gerekli aplikasyon (Saat) yuklu olup olmadığı kontrolu
+            if(intent.resolveActivity(getPackageManager()) != null){
+                startActivity(intent);
+            }
+            else{
+                Toast.makeText(DetailsActivity.this,"We can not find a clock application on your device!",Toast.LENGTH_LONG).show();
+            }
+        }
+    }
 
+    public void delete(View view){
+        try {
+            database.execSQL("CREATE TABLE IF NOT EXISTS notepages (id INTEGER PRIMARY KEY, notetitle VARCHAR,dateTimer VARCHAR, description VARCHAR,image BLOB)");
+            String sqlString = ("DELETE FROM notepages WHERE notetitle = ?");
+            SQLiteStatement sqLiteStatement = database.compileStatement(sqlString);
+            sqLiteStatement.bindString(1,binding.nameText.getText().toString());
+            sqLiteStatement.execute();
+        }catch (Exception e){
+            e.printStackTrace();
+        }
+        Intent intent = new Intent(DetailsActivity.this,MainActivity.class);
+
+        intent.addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP); //Bütün aktiviteleri kapat
+        startActivity(intent);
+    }
     public void update(View view){
-
+        Intent intent = getIntent();
+        int noteId = intent.getIntExtra("noteId",0);
         String name = binding.nameText.getText().toString();
         String date = binding.dateText.getText().toString();
         String description = binding.descriptionText.getText().toString();
 
 
-        System.out.println(name);
         try {
-            String sqlString = "INSERT INTO notepages (notetitle,dateTimer,description) VALUES(?,?,?)";
+            database.execSQL("CREATE TABLE IF NOT EXISTS notepages (id INTEGER PRIMARY KEY, notetitle VARCHAR,dateTimer VARCHAR, description VARCHAR,image BLOB)");
+            String sqlString = "UPDATE notepages SET notetitle = ?,dateTimer = ?,description = ? WHERE id = ?";
+
             SQLiteStatement sqLiteStatement = database.compileStatement(sqlString);
             sqLiteStatement.bindString(1,name);
             sqLiteStatement.bindString(2,date);
             sqLiteStatement.bindString(3,description);
+            sqLiteStatement.bindDouble(4,noteId);
 
 
             sqLiteStatement.execute();
         }catch (Exception e){
-
+            e.printStackTrace();
         }
+        intent = new Intent(DetailsActivity.this,MainActivity.class);
 
-
+        intent.addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP); //Bütün aktiviteleri kapat
+        startActivity(intent);
     }
 
     public void save(View view){
         String name = binding.nameText.getText().toString();
         String date = binding.dateText.getText().toString();
         String description = binding.descriptionText.getText().toString();
+        if(name.isEmpty()){
+            name = "No Title";
+        }
 
-
-        Bitmap smallImage = makeSmallerImage(selectedImage,400);
-        //Resimi veriye cevir
-        ByteArrayOutputStream outputStream = new ByteArrayOutputStream();
-        smallImage.compress(Bitmap.CompressFormat.PNG,50,outputStream);
-        byte[] byteArray = outputStream.toByteArray();
+            if(selectedImage != null){
+                Bitmap smallImage = makeSmallerImage(selectedImage,500);
+                //Resimi veriye cevir
+                ByteArrayOutputStream outputStream = new ByteArrayOutputStream();
+                smallImage.compress(Bitmap.CompressFormat.PNG,50,outputStream);
+                byteArray = outputStream.toByteArray();
+            }else{
+                selectedImage = BitmapFactory.decodeResource(getResources(), R.drawable.select);
+                Bitmap smallImagez = makeSmallerImage(selectedImage,500);
+                ByteArrayOutputStream outputStreamz = new ByteArrayOutputStream();
+                smallImagez.compress(Bitmap.CompressFormat.PNG,50,outputStreamz);
+                byteArray = outputStreamz.toByteArray();
+            }
 
         //Database oluştur
         try {
-
 
             database.execSQL("CREATE TABLE IF NOT EXISTS notepages (id INTEGER PRIMARY KEY, notetitle VARCHAR,dateTimer VARCHAR, description VARCHAR,image BLOB)");
             String sqlString = "INSERT INTO notepages (notetitle,dateTimer,description,image) VALUES(?,?,?,?)";
@@ -147,7 +232,6 @@ public class DetailsActivity extends AppCompatActivity {
             sqLiteStatement.bindString(2,date);
             sqLiteStatement.bindString(3,description);
             sqLiteStatement.bindBlob(4,byteArray);
-
             sqLiteStatement.execute();
         }catch (Exception e){
             e.printStackTrace();
@@ -175,7 +259,7 @@ public class DetailsActivity extends AppCompatActivity {
             width = (int) (height * bitmapRatio);
 
         }
-        return Bitmap.createScaledBitmap(image,width,height,true);
+        return Bitmap.createScaledBitmap(image,width,height,false);
     }
 
     public void selectImage(View view){
@@ -252,19 +336,5 @@ public class DetailsActivity extends AppCompatActivity {
         });
     }
 
-    @Override
-    public boolean onCreateOptionsMenu(Menu menu) {
-        MenuInflater menuInflater = getMenuInflater();
-        menuInflater.inflate(R.menu.options_menu,menu);
-        return super.onCreateOptionsMenu(menu);
-    }
 
-    @Override
-    public boolean onOptionsItemSelected(@NonNull MenuItem item) {
-        if(item.getItemId() == R.id.edit_note){
-
-
-        }
-        return super.onOptionsItemSelected(item);
-    }
 }
